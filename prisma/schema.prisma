@@ -1,0 +1,61 @@
+// Vaultrise backend persistence (PostgreSQL via Prisma).
+// Run `npm run db:push` (or `db:migrate`) after setting DATABASE_URL.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// Permanent record of every on-chain liquidation the bot performs.
+/// Backs the analytics liquidation feed so it survives restarts.
+model Liquidation {
+  id               Int      @id @default(autoincrement())
+  borrower         String
+  liquidator       String
+  symbol           String
+  debtRepaid       Float
+  collateralSeized Float
+  bonusBps         Int
+  signature        String?
+  timestamp        Int // unix seconds (matches the API shape)
+  createdAt        DateTime @default(now())
+
+  @@index([createdAt])
+}
+
+/// Rolling oracle price samples (optional history; the TWAP cache also keeps a
+/// short in-memory/Redis window). Lets price history survive restarts.
+model PriceSample {
+  id        Int      @id @default(autoincrement())
+  mint      String
+  symbol    String
+  price     Float // USD
+  createdAt DateTime @default(now())
+
+  @@index([mint, createdAt])
+}
+
+/// Registry of eligible collateral tokens (the "eligible list"). This replaces
+/// the old deployments/<cluster>.json file so it survives restarts/redeploys
+/// (e.g. on Railway). Written by `npm run add-token`, read by the API/TWAP.
+model CollateralToken {
+  mint          String   @id
+  symbol        String
+  decimals      Int
+  tokenProgram  String
+  price         Float    @default(0) // last known USD price (informational)
+  poolAddress   String
+  baseVault     String
+  quoteVault    String
+  baseMint      String
+  quoteMint     String
+  baseDecimals  Int
+  quoteDecimals Int
+  enabled       Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
