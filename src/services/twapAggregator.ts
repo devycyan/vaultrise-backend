@@ -17,6 +17,7 @@ import { config } from "../config";
 import { fetchDexMarket } from "../pumpswap";
 import { loadTokens } from "../registry";
 import { getProgram, pdas, tryLoadKeypair } from "../solana";
+import { sleep, startJitteredLoop } from "../timing";
 
 const WINDOW_MS = 30 * 60 * 1000; // 30 minutes
 const DEVIATION_UP_BPS = 2500; // spot > TWAP+25% => clamp to TWAP for LTV safety
@@ -34,7 +35,11 @@ async function runOnce(): Promise<void> {
   const program = getProgram(oracle);
   const now = Date.now();
 
+  let firstToken = true;
   for (const t of tokens) {
+    // Space out per-token on-chain pushes so we don't burst the RPC (429s).
+    if (!firstToken) await sleep(300 + Math.floor(Math.random() * 500)); // 300–800ms
+    firstToken = false;
     try {
       const market = await fetchDexMarket(t.mint);
       if (!market || market.priceUsd <= 0) continue;
@@ -79,6 +84,7 @@ export function startTwapAggregator(): void {
   // Tokens come from the DB registry (added at runtime), so always start the
   // loop; runOnce() is a no-op while there are no tokens.
   console.log(`[twap] aggregator every ${config.twapIntervalSec}s`);
-  runOnce().catch(() => {});
-  setInterval(() => runOnce().catch(() => {}), config.twapIntervalSec * 1000);
+  // Staggered start (+jitter) so TWAP, liquidation and LP loops don't all fire
+  // on the same tick and burst the RPC.
+  startJitteredLoop(config.twapIntervalSec * 1000, runOnce, 2_000);
 }

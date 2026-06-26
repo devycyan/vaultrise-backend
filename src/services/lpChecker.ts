@@ -11,6 +11,7 @@
 import { PublicKey } from "@solana/web3.js";
 import { config } from "../config";
 import { connection, getProgram, pdas, tryLoadKeypair } from "../solana";
+import { startJitteredLoop } from "../timing";
 
 const CONCENTRATION_LIMIT = 0.6;
 
@@ -57,6 +58,5 @@ async function runOnce(): Promise<void> {
 export function startLpChecker(): void {
   if (!config.tokens.length) return;
   console.log(`[lp] concentration checker every ${config.lpCheckIntervalSec}s`);
-  runOnce().catch(() => {});
-  setInterval(() => runOnce().catch(() => {}), config.lpCheckIntervalSec * 1000);
+  startJitteredLoop(config.lpCheckIntervalSec * 1000, runOnce, 40_000);
 }

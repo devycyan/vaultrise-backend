@@ -18,6 +18,7 @@ import { config } from "../config";
 import { getProgram, pdas, tryLoadKeypair } from "../solana";
 import { getAllPositions } from "../vaultrise/client";
 import { recordLiquidation } from "../store";
+import { startJitteredLoop } from "../timing";
 
 async function sellViaJupiter(symbol: string, amount: number): Promise<void> {
   if (config.cluster !== "mainnet-beta" || !config.jupiterApiKey) {
@@ -108,6 +109,5 @@ async function runOnce(): Promise<void> {
 
 export function startLiquidationBot(): void {
   console.log(`[liquidator] bot every ${config.liquidationIntervalSec}s`);
-  runOnce().catch(() => {});
-  setInterval(() => runOnce().catch(() => {}), config.liquidationIntervalSec * 1000);
+  startJitteredLoop(config.liquidationIntervalSec * 1000, runOnce, 20_000);
 }
