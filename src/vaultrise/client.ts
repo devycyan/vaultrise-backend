@@ -5,6 +5,7 @@
  */
 import { BN } from "@coral-xyz/anchor";
 import { PublicKey } from "@solana/web3.js";
+import { cacheGet, cacheSet } from "../cache";
 import { config, TokenInfo } from "../config";
 import { loadTokens } from "../registry";
 import { connection, pdas, readProgram } from "../solana";
@@ -119,33 +120,43 @@ export interface EligibleToken {
 }
 
 export async function getTokens(): Promise<EligibleToken[]> {
-  const out: EligibleToken[] = [];
+  // Cached for 30s. getTokens() fans out across every API endpoint and the
+  // liquidation bot, so without this each request would hit the RPC ~3x per
+  // token; the cache makes concurrent callers share a single refresh.
+  const cached = await cacheGet<EligibleToken[]>("tokens:list");
+  if (cached) return cached;
+
   const tokens = await loadTokens();
-  for (const t of tokens) {
-    const mint = new PublicKey(t.mint);
-    let priceUsd = t.price;
-    let priceTs = 0;
-    let maxLtvBps = 2000;
-    let enabled = true;
-    let lpBlocked = false;
-    try {
-      const oracle: any = await readProgram.account.oraclePrice.fetch(pdas.oracle(mint));
-      priceUsd = Number(oracle.price) / 1e6;
-      priceTs = Number(oracle.timestamp);
-    } catch {
-      /* use deployment default price */
-    }
-    try {
-      const tc: any = await readProgram.account.tokenConfig.fetch(pdas.tokenConfig(mint));
-      maxLtvBps = tc.maxLtvBps;
-      enabled = tc.enabled;
-      lpBlocked = tc.lpBlocked;
-    } catch {
-      /* defaults */
-    }
-    const quoteReserve = await tokenBalance(new PublicKey(t.pool.quoteVault));
-    const lpUsd = (quoteReserve / 1e6) * 2;
-    out.push({
+  if (!tokens.length) return [];
+
+  // Batch every on-chain read: one getMultipleAccounts for all oracles, one for
+  // all token configs, one for all quote vaults — instead of 3 calls per token.
+  let oracles: (any | null)[] = [];
+  let tcs: (any | null)[] = [];
+  let quoteInfos: ({ data: Buffer } | null)[] = [];
+  try {
+    [oracles, tcs, quoteInfos] = await Promise.all([
+      readProgram.account.oraclePrice.fetchMultiple(tokens.map((t) => pdas.oracle(new PublicKey(t.mint)))),
+      readProgram.account.tokenConfig.fetchMultiple(tokens.map((t) => pdas.tokenConfig(new PublicKey(t.mint)))),
+      connection.getMultipleAccountsInfo(tokens.map((t) => new PublicKey(t.pool.quoteVault))),
+    ]);
+  } catch {
+    /* RPC hiccup — fall back to deployment defaults per token below */
+  }
+
+  const out: EligibleToken[] = tokens.map((t, i) => {
+    const oracle = oracles[i];
+    const tc = tcs[i];
+    const info = quoteInfos[i];
+    const priceUsd = oracle ? Number(oracle.price) / 1e6 : t.price;
+    const priceTimestamp = oracle ? Number(oracle.timestamp) : 0;
+    const maxLtvBps = tc ? Number(tc.maxLtvBps) : 2000;
+    const enabled = tc ? Boolean(tc.enabled) : true;
+    const lpBlocked = tc ? Boolean(tc.lpBlocked) : false;
+    // SPL token-account amount is a u64 LE at byte offset 64.
+    const quoteRaw = info && info.data.length >= 72 ? Number(info.data.readBigUInt64LE(64)) : 0;
+    const lpUsd = (quoteRaw / 1e6) * 2;
+    return {
       symbol: t.symbol,
       mint: t.mint,
       decimals: t.decimals,
@@ -155,9 +166,11 @@ export async function getTokens(): Promise<EligibleToken[]> {
       enabled,
       lpBlocked,
       eligible: enabled && !lpBlocked && lpUsd >= config.minLpUsd,
-      priceTimestamp: priceTs,
-    });
-  }
+      priceTimestamp,
+    };
+  });
+
+  await cacheSet("tokens:list", out, 30);
   return out;
 }
 
@@ -216,14 +229,20 @@ function toView(
 }
 
 export async function getAllPositions(): Promise<PositionView[]> {
+  // Cached for 15s — called by the pool/analytics endpoints, the positions
+  // endpoint and the liquidation bot; the plain view array is JSON-safe.
+  const cached = await cacheGet<PositionView[]>("positions:all");
+  if (cached) return cached;
   try {
     const reserve = await getReserve();
     const prices = await priceMap();
     const metaMap = new Map((await loadTokens()).map((t) => [t.mint, t]));
     const all = await readProgram.account.userPosition.all();
-    return all
+    const views = all
       .map((a: any) => toView(a.account, reserve, prices, metaMap))
       .filter((p: PositionView) => p.principalUsd > 0 || p.collateralAmount > 0);
+    await cacheSet("positions:all", views, 15);
+    return views;
   } catch {
     return [];
   }
