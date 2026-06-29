@@ -64,3 +64,35 @@ export async function recordPriceSample(mint: string, symbol: string, price: num
     /* best-effort history; ignore */
   }
 }
+
+// --- Telegram alert subscriptions (wallet -> telegram chat id) ---------------
+// In-memory fallback (used only when Postgres is not configured / unreachable).
+const subs = new Map<string, string>();
+
+export async function upsertSubscription(wallet: string, telegramId: string): Promise<void> {
+  if (prisma) {
+    try {
+      await prisma.alertSubscription.upsert({
+        where: { wallet },
+        create: { wallet, telegramId },
+        update: { telegramId },
+      });
+      return;
+    } catch (e: any) {
+      console.warn("[store] subscription DB write failed, using memory:", e.message);
+    }
+  }
+  subs.set(wallet, telegramId);
+}
+
+export async function getSubscription(wallet: string): Promise<string | null> {
+  if (prisma) {
+    try {
+      const row = await prisma.alertSubscription.findUnique({ where: { wallet } });
+      return row?.telegramId ?? null;
+    } catch (e: any) {
+      console.warn("[store] subscription DB read failed, using memory:", e.message);
+    }
+  }
+  return subs.get(wallet) ?? null;
+}

@@ -84,6 +84,9 @@ export const config = {
   jupiterApiUrl: process.env.JUPITER_API_URL || "https://api.jup.ag/swap/v2",
   jupiterApiKey: process.env.JUPITER_API_KEY || "",
   corsOrigins: (process.env.CORS_ORIGINS || "").split(",").map((s) => s.trim()).filter(Boolean),
+  // Telegram alert bot. Empty => alerts are logged only (never sent). Recipients
+  // come from per-wallet subscriptions (POST /api/alerts/subscribe), not a chat id.
+  telegramBotToken: process.env.TELEGRAM_BOT_TOKEN || "",
   isDeployed: Boolean(deployment.programId || process.env.PROGRAM_ID),
 };
 

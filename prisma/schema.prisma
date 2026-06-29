@@ -60,3 +60,13 @@ model CollateralToken {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 }
+
+/// Per-user Telegram alert subscriptions: wallet -> Telegram chat id. The alert
+/// bot DMs the subscribed id about that wallet's own activity. `wallet` is the
+/// primary key — re-subscribing updates the id.
+model AlertSubscription {
+  wallet     String   @id
+  telegramId String
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}

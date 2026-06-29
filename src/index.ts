@@ -5,9 +5,11 @@ import cors from "cors";
 import express from "express";
 import { config } from "./config";
 import { router } from "./routes";
+import { startAlertBot } from "./services/alertBot";
 import { startLiquidationBot } from "./services/liquidationBot";
 import { startLpChecker } from "./services/lpChecker";
 import { startTwapAggregator } from "./services/twapAggregator";
+import { startTelegramCommandListener } from "./telegram";
 
 const app = express();
 app.use(express.json());
@@ -28,4 +30,6 @@ app.listen(config.port, () => {
   startTwapAggregator();
   startLiquidationBot();
   startLpChecker();
+  startAlertBot();
+  startTelegramCommandListener();
 });

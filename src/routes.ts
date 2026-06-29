@@ -2,6 +2,7 @@
  * Public REST API. All responses are JSON and safe to call before the protocol
  * is deployed (they return empty/zero shapes).
  */
+import { PublicKey } from "@solana/web3.js";
 import { Router } from "express";
 import { cacheGet, cacheSet } from "./cache";
 import { config } from "./config";
@@ -13,7 +14,7 @@ import {
   getTokens,
   getUserPositions,
 } from "./vaultrise/client";
-import { getLiquidationFeed } from "./store";
+import { getLiquidationFeed, upsertSubscription } from "./store";
 import { simulate } from "./vaultrise/simulate";
 
 export const router = Router();
@@ -53,6 +54,27 @@ router.get("/simulate", async (req, res) => {
     res.json(await simulate({ mint, collateral, borrow, boost }));
   } catch (e: any) {
     res.status(404).json({ error: e.message || "simulation failed" });
+  }
+});
+
+// Subscribe a wallet to its own Telegram alerts (per-user). The bot DMs the
+// given Telegram id about that wallet's activity; the user must /start the bot first.
+router.post("/alerts/subscribe", async (req, res) => {
+  const wallet = String(req.body?.wallet || "").trim();
+  const telegramId = String(req.body?.telegramId || "").trim();
+  try {
+    new PublicKey(wallet);
+  } catch {
+    return res.status(400).json({ error: "invalid wallet address" });
+  }
+  if (!/^\d{3,}$/.test(telegramId)) {
+    return res.status(400).json({ error: "invalid Telegram id" });
+  }
+  try {
+    await upsertSubscription(wallet, telegramId);
+    res.json({ ok: true });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message || "subscription failed" });
   }
 });
 
