@@ -48,6 +48,7 @@ model CollateralToken {
   decimals      Int
   tokenProgram  String
   price         Float    @default(0) // last known USD price (informational)
+  source        String   @default("pumpswap") // pool source: "pumpswap" | "meteora"
   poolAddress   String
   baseVault     String
   quoteVault    String

@@ -17,6 +17,7 @@ function rowToToken(r: any): TokenInfo {
     decimals: r.decimals,
     price: r.price,
     pool: {
+      source: (r.source as "pumpswap" | "meteora") || "pumpswap",
       authority: r.poolAddress,
       baseVault: r.baseVault,
       quoteVault: r.quoteVault,
@@ -60,6 +61,7 @@ export interface UpsertTokenInput {
   decimals: number;
   tokenProgram: string;
   price: number;
+  source?: "pumpswap" | "meteora";
   poolAddress: string;
   baseVault: string;
   quoteVault: string;
@@ -77,7 +79,7 @@ export async function upsertToken(t: UpsertTokenInput): Promise<void> {
       "DATABASE_URL is not set — cannot persist the token registry. Point it at your Postgres (the backend reads tokens from there)."
     );
   }
-  const data = { ...t, enabled: t.enabled ?? true };
+  const data = { ...t, source: t.source ?? "pumpswap", enabled: t.enabled ?? true };
   await prisma.collateralToken.upsert({ where: { mint: t.mint }, create: data, update: data });
   invalidateTokenCache();
 }

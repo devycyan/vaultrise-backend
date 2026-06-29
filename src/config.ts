@@ -11,6 +11,8 @@ import idl from "./vaultrise/idl/vaultrise.json";
 dotenv.config();
 
 export interface PoolInfo {
+  // Pool source DEX. Absent on legacy rows ⇒ treat as "pumpswap".
+  source?: "pumpswap" | "meteora";
   authority: string;
   baseVault: string;
   quoteVault: string;

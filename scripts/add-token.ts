@@ -1,8 +1,9 @@
 /**
  * Register a graduated pump.fun token as eligible collateral.
  *
- *   npm run add-token -- <MINT> <maxLtvBps> <PUMPSWAP_POOL|auto> [priceUsd]
- *   e.g. npm run add-token -- 7xKq...mint 2000 auto 0.0005
+ *   npm run add-token -- <MINT> <maxLtvBps> <POOL|auto|meteora> [priceUsd]
+ *   e.g. npm run add-token -- 7xKq...mint 2000 auto 0.0005      (PumpSwap, auto-resolve)
+ *        npm run add-token -- 7xKq...mint 2000 meteora 0.0005   (Meteora DLMM/DAMM)
  *
  * Sends `add_token` on-chain (admin) AND persists the token to PostgreSQL so the
  * API/frontend list it — survives restarts/redeploys (Railway). Re-running just
@@ -10,7 +11,8 @@
  * Postgres the backend uses (e.g. the Railway DB's public URL).
  *
  * - maxLtvBps: 2000 = 20% (bps; NOT 20).
- * - PUMPSWAP_POOL: "auto" resolves from the mint, or pass the pool address.
+ * - POOL: "auto" (PumpSwap, resolved from the mint), "meteora" (Meteora DLMM/DAMM,
+ *   resolved from the mint), or an explicit PumpSwap pool address.
  * - priceUsd: USD price per 1 whole token (DexScreener "Price USD"). Seeds the
  *   on-chain oracle (needs a funded ORACLE_UPDATER). Keys only from wallets/.
  */
@@ -19,7 +21,7 @@ import { PublicKey, SystemProgram } from "@solana/web3.js";
 import { config } from "../src/config";
 import { loadKeypair } from "../src/loadKeypair";
 import { connection, getProgram, pdas } from "../src/solana";
-import { readPool, resolvePumpSwapPool } from "../src/pumpswap";
+import { readPool, resolveMeteoraPool, resolvePumpSwapPool, ResolvedPool } from "../src/pumpswap";
 import { upsertToken } from "../src/registry";
 
 async function mintInfo(mint: PublicKey) {
@@ -32,7 +34,7 @@ async function mintInfo(mint: PublicKey) {
 async function main() {
   const [mintArg, ltvArg, poolArg, priceArg] = process.argv.slice(2);
   if (!mintArg || !ltvArg || !poolArg) {
-    throw new Error('Usage: npm run add-token -- <MINT> <maxLtvBps> <PUMPSWAP_POOL|auto> [priceUsd]');
+    throw new Error('Usage: npm run add-token -- <MINT> <maxLtvBps> <POOL|auto|meteora> [priceUsd]');
   }
   const mint = new PublicKey(mintArg);
   const maxLtvBps = Number(ltvArg);
@@ -40,11 +42,14 @@ async function main() {
     throw new Error("maxLtvBps must be an integer in (0, 10000]. 20% = 2000 (not 20).");
   }
 
-  const poolData =
-    poolArg.toLowerCase() === "auto"
+  const pa = poolArg.toLowerCase();
+  const poolData: ResolvedPool =
+    pa === "auto"
       ? await resolvePumpSwapPool(connection, mint)
-      : await readPool(connection, new PublicKey(poolArg));
-  console.log(`Pool: ${poolData.pool.toBase58()} (quote ${poolData.quoteMint.toBase58()})`);
+      : pa === "meteora"
+        ? await resolveMeteoraPool(connection, mint)
+        : { source: "pumpswap", ...(await readPool(connection, new PublicKey(poolArg))) };
+  console.log(`Pool [${poolData.source}]: ${poolData.pool.toBase58()} (quote ${poolData.quoteMint.toBase58()})`);
 
   const base = await mintInfo(mint);
   const quote = await mintInfo(poolData.quoteMint);
@@ -102,9 +107,11 @@ async function main() {
     decimals: base.decimals,
     tokenProgram: base.program,
     price: priceUsd,
+    source: poolData.source,
     poolAddress: poolData.pool.toBase58(),
-    baseVault: poolData.baseVault.toBase58(),
-    quoteVault: poolData.quoteVault.toBase58(),
+    // Vaults exist only for PumpSwap; Meteora liquidity is read via DexScreener.
+    baseVault: poolData.baseVault?.toBase58() ?? "",
+    quoteVault: poolData.quoteVault?.toBase58() ?? "",
     baseMint: poolData.baseMint.toBase58(),
     quoteMint: poolData.quoteMint.toBase58(),
     baseDecimals: base.decimals,

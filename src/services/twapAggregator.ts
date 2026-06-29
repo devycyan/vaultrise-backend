@@ -41,7 +41,7 @@ async function runOnce(): Promise<void> {
     if (!firstToken) await sleep(300 + Math.floor(Math.random() * 500)); // 300–800ms
     firstToken = false;
     try {
-      const market = await fetchDexMarket(t.mint);
+      const market = await fetchDexMarket(t.mint, t.pool.source);
       if (!market || market.priceUsd <= 0) continue;
       if (market.liquidityUsd < config.twapMinLpUsd) {
         console.warn(

@@ -7,6 +7,7 @@ import { BN } from "@coral-xyz/anchor";
 import { PublicKey } from "@solana/web3.js";
 import { cacheGet, cacheSet } from "../cache";
 import { config, TokenInfo } from "../config";
+import { fetchDexLiquidityBatch } from "../pumpswap";
 import { loadTokens } from "../registry";
 import { connection, pdas, readProgram } from "../solana";
 import { borrowApr, healthFactor, lenderApy, utilization } from "./math";
@@ -129,33 +130,33 @@ export async function getTokens(): Promise<EligibleToken[]> {
   const tokens = await loadTokens();
   if (!tokens.length) return [];
 
-  // Batch every on-chain read: one getMultipleAccounts for all oracles, one for
-  // all token configs, one for all quote vaults — instead of 3 calls per token.
+  // On-chain reads, batched: one getMultipleAccounts for all oracles, one for all
+  // token configs. Liquidity comes from DexScreener (one HTTP call, source-agnostic
+  // — works for PumpSwap and Meteora alike), so no per-pool vault decoding is needed.
   let oracles: (any | null)[] = [];
   let tcs: (any | null)[] = [];
-  let quoteInfos: ({ data: Buffer } | null)[] = [];
   try {
-    [oracles, tcs, quoteInfos] = await Promise.all([
+    [oracles, tcs] = await Promise.all([
       readProgram.account.oraclePrice.fetchMultiple(tokens.map((t) => pdas.oracle(new PublicKey(t.mint)))),
       readProgram.account.tokenConfig.fetchMultiple(tokens.map((t) => pdas.tokenConfig(new PublicKey(t.mint)))),
-      connection.getMultipleAccountsInfo(tokens.map((t) => new PublicKey(t.pool.quoteVault))),
     ]);
   } catch {
     /* RPC hiccup — fall back to deployment defaults per token below */
   }
+  const liquidity = await fetchDexLiquidityBatch(tokens.map((t) => t.mint));
 
   const out: EligibleToken[] = tokens.map((t, i) => {
     const oracle = oracles[i];
     const tc = tcs[i];
-    const info = quoteInfos[i];
-    const priceUsd = oracle ? Number(oracle.price) / 1e6 : t.price;
+    const dex = liquidity[t.mint];
+    // On-chain oracle is authoritative for price; fall back to DexScreener, then
+    // the stored deployment price.
+    const priceUsd = oracle ? Number(oracle.price) / 1e6 : dex?.priceUsd || t.price;
     const priceTimestamp = oracle ? Number(oracle.timestamp) : 0;
     const maxLtvBps = tc ? Number(tc.maxLtvBps) : 2000;
     const enabled = tc ? Boolean(tc.enabled) : true;
     const lpBlocked = tc ? Boolean(tc.lpBlocked) : false;
-    // SPL token-account amount is a u64 LE at byte offset 64.
-    const quoteRaw = info && info.data.length >= 72 ? Number(info.data.readBigUInt64LE(64)) : 0;
-    const lpUsd = (quoteRaw / 1e6) * 2;
+    const lpUsd = dex?.liquidityUsd ?? 0;
     return {
       symbol: t.symbol,
       mint: t.mint,
