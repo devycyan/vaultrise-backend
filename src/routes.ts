@@ -14,6 +14,7 @@ import {
   getUserPositions,
 } from "./vaultrise/client";
 import { getLiquidationFeed } from "./store";
+import { simulate } from "./vaultrise/simulate";
 
 export const router = Router();
 
@@ -33,6 +34,26 @@ router.get("/tokens/eligible", async (req, res) => {
   const all = await getTokens();
   const list = req.query.all === "1" ? all : all.filter((t) => t.eligible);
   res.json(list);
+});
+
+// Borrow/liquidation simulator: preview LTV, health factor, liquidation price
+// and fees for a hypothetical position. Read-only.
+//   GET /api/simulate?mint=<mint>&collateral=<amount>&borrow=<usdc>&boost=0|1
+router.get("/simulate", async (req, res) => {
+  const mint = String(req.query.mint || "");
+  const collateral = Number(req.query.collateral ?? 0);
+  const borrow = Number(req.query.borrow ?? 0);
+  const boost = req.query.boost === "1" || req.query.boost === "true";
+  if (!mint) return res.status(400).json({ error: "query param 'mint' is required" });
+  if (!Number.isFinite(collateral) || collateral < 0)
+    return res.status(400).json({ error: "'collateral' must be a non-negative number" });
+  if (!Number.isFinite(borrow) || borrow < 0)
+    return res.status(400).json({ error: "'borrow' must be a non-negative number" });
+  try {
+    res.json(await simulate({ mint, collateral, borrow, boost }));
+  } catch (e: any) {
+    res.status(404).json({ error: e.message || "simulation failed" });
+  }
 });
 
 router.get("/liquidatable", async (_req, res) => {
